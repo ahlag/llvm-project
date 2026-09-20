@@ -11,6 +11,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/IR/Type.h"
 #include "llvm/SandboxIR/Instruction.h"
 #include "llvm/Support/CommandLine.h"
 #include "llvm/Transforms/Vectorize/SandboxVectorizer/Debug.h"
@@ -140,6 +141,40 @@ template void
 template LLVM_EXPORT_TEMPLATE void
     VecUtils::DeadInstructionMorgue::collectPotentiallyDeadInstrs<Instruction>(
         BndlRef<Instruction *>);
+
+Type *getCombinedVectorTypeFor(BndlRef<Value *> Bndl, const DataLayout &DL) {
+  assert(!Bndl.empty() && "Expected non-empty Bndl!");
+  unsigned TotalBits = 0;
+  unsigned GCDBits = 0;
+  auto &Ctx = Bndl[0]->getContext();
+
+  // Prefer a half/float/double lane type when every element has that FP type.
+  // Otherwise use an integer lane type. That keeps same-typed FP bundles as FP
+  // vectors (e.g. float,float -> <2 x float>) and packs mixed or integer
+  // bundles as integers (e.g. i32,i16 -> <3 x i16>, float,i32 -> <2 x i32>).
+  BndlProfiler Profiler(Bndl);
+  for (Value *V : Bndl) {
+    Type *ElmTy = VecUtils::getElementType(Utils::getExpectedType(V));
+    unsigned ElmBits = Utils::getNumBits(ElmTy, DL);
+    TotalBits += ElmBits * VecUtils::getNumLanes(V);
+    GCDBits = std::gcd(GCDBits, ElmBits);
+  }
+
+  // Lane count is TotalBits / GCDBits. Using the GCD bitwidth as the integer
+  // lane size guarantees each original element occupies a whole number of
+  // lanes (e.g. i8+i16 -> GCD 8 -> <3 x i8>).
+  Type *VecElmTy = nullptr;
+  if (Profiler.areAllHalves()) {
+    VecElmTy = Type::getHalfTy(Ctx);
+  } else if (Profiler.areAllFloats()) {
+    VecElmTy = Type::getFloatTy(Ctx);
+  } else if (Profiler.areAllDoubles()) {
+    VecElmTy = Type::getDoubleTy(Ctx);
+  } else {
+    VecElmTy = IntegerType::get(Ctx, GCDBits);
+  }
+  return FixedVectorType::get(VecElmTy, TotalBits / GCDBits);
+}
 
 void VecUtils::DeadInstructionMorgue::tryEraseDeadInstrs() {
   DenseMap<BasicBlock *, SmallVector<Instruction *>> SortedDeadInstrCandidates;
