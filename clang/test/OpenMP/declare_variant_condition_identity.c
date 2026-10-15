@@ -21,11 +21,12 @@
 // Verify that serialization preserves the expressions of folded user
 // conditions, and that direct inclusion agrees. Expanded expressions identify
 // distinct conditions, while ignoring outer parentheses preserves identical
-// conditions.
+// conditions. Source location builtins of different kinds are distinct.
 
 // CHECK-LABEL: define{{.*}} void @test_conditions()
 // CHECK: call void @condition_high_variant()
 // CHECK-NEXT: call void @condition_low_variant()
+// CHECK-NEXT: call void @condition_high_variant()
 // CHECK: ret void
 
 //--- conditions.h
@@ -60,6 +61,14 @@ void identical_condition_base(void);
 #undef FIRST_COND
 #undef SECOND_COND
 
+#pragma omp declare variant(condition_high_variant)                       \
+    match(implementation = {vendor(score(100) : llvm)},                    \
+          user = {condition(__builtin_LINE())})
+#pragma omp declare variant(condition_low_variant)                         \
+    match(implementation = {vendor(score(1) : llvm)}, device = {kind(cpu)}, \
+          user = {condition(__builtin_COLUMN())})
+void source_location_base(void);
+
 #ifdef __cplusplus
 }
 #endif
@@ -71,4 +80,5 @@ extern "C"
 void test_conditions(void) {
   distinct_condition_base();
   identical_condition_base();
+  source_location_base();
 }

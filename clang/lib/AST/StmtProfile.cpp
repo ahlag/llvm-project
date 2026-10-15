@@ -1678,6 +1678,7 @@ void StmtProfiler::VisitShuffleVectorExpr(const ShuffleVectorExpr *S) {
 
 void StmtProfiler::VisitConvertVectorExpr(const ConvertVectorExpr *S) {
   VisitExpr(S);
+  VisitType(S->getType());
 }
 
 void StmtProfiler::VisitChooseExpr(const ChooseExpr *S) {
@@ -2297,6 +2298,7 @@ void StmtProfiler::VisitCXXReflectExpr(const CXXReflectExpr *E) {
 void
 StmtProfiler::VisitCXXScalarValueInitExpr(const CXXScalarValueInitExpr *S) {
   VisitExpr(S);
+  VisitType(S->getType());
 }
 
 void StmtProfiler::VisitCXXDeleteExpr(const CXXDeleteExpr *S) {
@@ -2542,6 +2544,7 @@ void StmtProfiler::VisitOpaqueValueExpr(const OpaqueValueExpr *E) {
 
 void StmtProfiler::VisitSourceLocExpr(const SourceLocExpr *E) {
   VisitExpr(E);
+  ID.AddInteger(llvm::to_underlying(E->getIdentKind()));
 }
 
 void StmtProfiler::VisitEmbedExpr(const EmbedExpr *E) { VisitExpr(E); }

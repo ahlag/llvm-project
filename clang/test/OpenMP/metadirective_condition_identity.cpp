@@ -50,3 +50,28 @@ extern "C" void non_constant_score(int n) {
          implementation = {vendor(llvm), extension(score(n) : match_any)}, \
          device = {kind(cpu)} : taskwait)
 }
+
+typedef float F2 __attribute__((ext_vector_type(2)));
+typedef int I2 __attribute__((ext_vector_type(2)));
+typedef long L2 __attribute__((ext_vector_type(2)));
+
+// Value initializations and vector conversions to different types differ.
+// CHECK-LABEL: define{{.*}} void @written_types(
+// CHECK-NOT: __kmpc_omp_taskwait
+// CHECK: call {{.*}} @__kmpc_omp_taskyield(
+// CHECK: call {{.*}} @__kmpc_omp_taskyield(
+// CHECK-NOT: __kmpc_omp_taskwait
+// CHECK: ret void
+extern "C" void written_types(F2 v) {
+#pragma omp metadirective \
+    when(user = {condition(!int())}, \
+         implementation = {vendor(score(100) : llvm)} : taskyield) \
+    when(user = {condition(!long())}, device = {kind(cpu)}, \
+         implementation = {vendor(score(1) : llvm)} : taskwait)
+#pragma omp metadirective \
+    when(user = {condition(sizeof(__builtin_convertvector(v, I2)) > 0)}, \
+         implementation = {vendor(score(100) : llvm)} : taskyield) \
+    when(user = {condition(sizeof(__builtin_convertvector(v, L2)) > 0)}, \
+         device = {kind(cpu)}, \
+         implementation = {vendor(score(1) : llvm)} : taskwait)
+}
