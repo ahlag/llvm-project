@@ -603,3 +603,139 @@ subroutine test_implicit_nothing_distinct_conditions(a, b)
   !$omp & default(taskyield)
 #endif
 end subroutine
+
+! Optional bounds, strides, and inquiries keep these conditions distinct, so
+! each first selector keeps its higher score.
+! CHECK-LABEL: func.func @_QPtest_distinct_operands(
+! CHECK-NOT:     omp.taskwait
+! CHECK-COUNT-6: omp.taskyield
+! CHECK-NOT:     omp.taskwait
+! CHECK:         return
+subroutine test_distinct_operands(x, y)
+  integer :: x, y
+  integer :: a(3)
+  character(3), parameter :: s = "abc", text(1) = ["abc"]
+  !$omp metadirective &
+  !$omp & when(user={condition(size(a(1:)) > 0)}, &
+  !$omp & implementation={vendor(score(100): llvm)}: taskyield) &
+  !$omp & when(user={condition(size(a(:1)) > 0)}, device={kind(cpu)}, &
+  !$omp & implementation={vendor(score(1): llvm)}: taskwait)
+  !$omp metadirective &
+  !$omp & when(user={condition(size(a(:2)) > 0)}, &
+  !$omp & implementation={vendor(score(100): llvm)}: taskyield) &
+  !$omp & when(user={condition(size(a(::2)) > 0)}, device={kind(cpu)}, &
+  !$omp & implementation={vendor(score(1): llvm)}: taskwait)
+  !$omp metadirective &
+  !$omp & when(user={condition(len(s(1:)) > 0)}, &
+  !$omp & implementation={vendor(score(100): llvm)}: taskyield) &
+  !$omp & when(user={condition(len(s(:1)) > 0)}, device={kind(cpu)}, &
+  !$omp & implementation={vendor(score(1): llvm)}: taskwait)
+  !$omp metadirective &
+  !$omp & when(user={condition(text(1)(:)%len > 0)}, &
+  !$omp & implementation={vendor(score(100): llvm)}: taskyield) &
+  !$omp & when(user={condition(text(1)(:)%kind > 0)}, device={kind(cpu)}, &
+  !$omp & implementation={vendor(score(1): llvm)}: taskwait)
+  !$omp metadirective &
+  !$omp & when(user={condition(s(1:2)%len > 0)}, &
+  !$omp & implementation={vendor(score(100): llvm)}: taskyield) &
+  !$omp & when(user={condition(s(1:2)%kind > 0)}, device={kind(cpu)}, &
+  !$omp & implementation={vendor(score(1): llvm)}: taskwait)
+  !$omp metadirective &
+  !$omp & when(user={condition(x%kind == 4)}, &
+  !$omp & implementation={vendor(score(100): llvm)}: taskyield) &
+  !$omp & when(user={condition(y%kind == 4)}, device={kind(cpu)}, &
+  !$omp & implementation={vendor(score(1): llvm)}: taskwait)
+end subroutine
+
+! Type parameter inquiries and implied-DO indices get a new symbol at each
+! occurrence, but these conditions are the same expression.
+! CHECK-LABEL: func.func @_QPtest_identical_operands(
+! CHECK-NOT:     omp.taskyield
+! CHECK-COUNT-5: omp.taskwait
+! CHECK-NOT:     omp.taskyield
+! CHECK:         return
+subroutine test_identical_operands(x)
+  integer :: x, i
+  integer :: a(3)
+  character(3), parameter :: s = "abc"
+  integer, parameter :: p(3) = [1, 2, 3]
+  !$omp metadirective &
+  !$omp & when(user={condition(size(a(1:)) > 0)}, &
+  !$omp & implementation={vendor(score(100): llvm)}: taskyield) &
+  !$omp & when(user={condition(size(a(1:)) > 0)}, device={kind(cpu)}, &
+  !$omp & implementation={vendor(score(1): llvm)}: taskwait)
+  !$omp metadirective &
+  !$omp & when(user={condition(len(s(:1)) > 0)}, &
+  !$omp & implementation={vendor(score(100): llvm)}: taskyield) &
+  !$omp & when(user={condition(len(s(:1)) > 0)}, device={kind(cpu)}, &
+  !$omp & implementation={vendor(score(1): llvm)}: taskwait)
+  !$omp metadirective &
+  !$omp & when(user={condition(s(1:2)%len > 0)}, &
+  !$omp & implementation={vendor(score(100): llvm)}: taskyield) &
+  !$omp & when(user={condition(s(1:2)%len > 0)}, device={kind(cpu)}, &
+  !$omp & implementation={vendor(score(1): llvm)}: taskwait)
+  !$omp metadirective &
+  !$omp & when(user={condition(x%kind == 4)}, &
+  !$omp & implementation={vendor(score(100): llvm)}: taskyield) &
+  !$omp & when(user={condition(x%kind == 4)}, device={kind(cpu)}, &
+  !$omp & implementation={vendor(score(1): llvm)}: taskwait)
+  !$omp metadirective &
+  !$omp & when(user={condition(any([(p(i) > 0, i = 1, 3)]))}, &
+  !$omp & implementation={vendor(score(100): llvm)}: taskyield) &
+  !$omp & when(user={condition(any([(p(i) > 0, i = 1, 3)]))}, &
+  !$omp & device={kind(cpu)}, implementation={vendor(score(1): llvm)}: taskwait)
+end subroutine
+
+! An omitted directive is NOTHING: in both forms, the first selector is a strict
+! subset of the second, so TASKYIELD is never selected.
+! CHECK-LABEL: func.func @_QPtest_implicit_nothing_same_condition(
+! CHECK-NOT:     omp.taskyield
+! CHECK:         return
+subroutine test_implicit_nothing_same_condition(a)
+  logical, intent(in) :: a
+  !$omp metadirective &
+  !$omp & when(user={condition(a)}, &
+  !$omp & implementation={vendor(score(100): llvm), extension(match_any)}: &
+  !$omp & taskyield) &
+  !$omp & when(user={condition(a)}, device={kind(cpu)}, &
+  !$omp & implementation={vendor(score(1): llvm), extension(match_any)}:)
+  !$omp metadirective &
+  !$omp & when(user={condition(a)}, &
+  !$omp & implementation={vendor(score(100): llvm), extension(match_any)}: &
+  !$omp & taskyield) &
+  !$omp & when(user={condition(a)}, device={kind(cpu)}, &
+  !$omp & implementation={vendor(score(1): llvm), extension(match_any)}: &
+  !$omp & nothing)
+end subroutine
+
+! The scored condition ranks an omitted directive first, as it ranks an
+! explicit NOTHING, including when only the condition can satisfy MATCH_ANY.
+! CHECK-LABEL: func.func @_QPtest_implicit_nothing_scored_condition(
+! CHECK:         fir.if
+! CHECK-NEXT:    } else {
+! CHECK-NEXT:      omp.taskwait
+! CHECK:         fir.if
+! CHECK-NEXT:    } else {
+! CHECK-NEXT:      omp.taskwait
+! CHECK:         fir.if
+! CHECK-NEXT:    } else {
+! CHECK-NEXT:      omp.taskwait
+! CHECK:         fir.if
+! CHECK-NEXT:    } else {
+! CHECK-NEXT:      omp.taskwait
+! CHECK:         return
+subroutine test_implicit_nothing_scored_condition(flag)
+  logical, intent(in) :: flag
+  !$omp metadirective when(user={condition(score(100): flag)}:) &
+  !$omp & when(implementation={vendor(score(50): llvm)}: taskwait)
+  !$omp metadirective when(user={condition(score(100): flag)}: nothing) &
+  !$omp & when(implementation={vendor(score(50): llvm)}: taskwait)
+  !$omp metadirective &
+  !$omp & when(implementation={vendor(foo), extension(match_any)}, &
+  !$omp & user={condition(score(100): flag)}:) &
+  !$omp & when(implementation={vendor(score(50): llvm)}: taskwait)
+  !$omp metadirective &
+  !$omp & when(implementation={vendor(foo), extension(match_any)}, &
+  !$omp & user={condition(score(100): flag)}: nothing) &
+  !$omp & when(implementation={vendor(score(50): llvm)}: taskwait)
+end subroutine

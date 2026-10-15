@@ -35,6 +35,8 @@
 ! LOCAL: fir.call @_QMconditionsPlow()
 ! inner_parentheses:
 ! LOCAL: fir.call @_QMconditionsPhigh()
+! intrinsic_scopes:
+! LOCAL: fir.call @_QMconditionsPlow()
 ! LOCAL: return
 
 ! Aliases of a USE-associated entity share its identity; different entities do
@@ -77,6 +79,7 @@ end module
 !--- variants.f90
 module conditions
   use settings, only: on, on2 => on, other
+  integer, parameter :: values(3) = [1, 2, 3]
 contains
   integer function high()
     high = 100
@@ -233,8 +236,23 @@ contains
     inner_parentheses = 0
   end function
 
+  ! Each scope gets its own symbol for the same intrinsic.
+  integer function intrinsic_scopes()
+    intrinsic_scopes = 0
+  end function
+  subroutine intrinsic_scope_high()
+    !$omp declare variant(intrinsic_scopes:high) &
+    !$omp& match(user={condition(size(values) == 3)}, &
+    !$omp& implementation={vendor(score(100): llvm)})
+  end subroutine
+  subroutine intrinsic_scope_low()
+    !$omp declare variant(intrinsic_scopes:low) &
+    !$omp& match(user={condition(size(values) == 3)}, &
+    !$omp& implementation={vendor(score(1): llvm)}, device={kind(cpu)})
+  end subroutine
+
   subroutine local_calls(a)
-    integer :: a(18)
+    integer :: a(19)
     a(1) = parentheses()
     a(2) = aliases()
     a(3) = compound_aliases()
@@ -253,6 +271,7 @@ contains
     a(16) = spelling_complex_values()
     a(17) = spelling_integer_min()
     a(18) = inner_parentheses()
+    a(19) = intrinsic_scopes()
   end subroutine
 end module
 

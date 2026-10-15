@@ -2488,23 +2488,55 @@ struct ConditionIdentity {
     static char tag;
     id.AddPointer(&tag);
   }
+  template <typename T> static bool IsAbsent(const T &) { return false; }
+  template <typename T> static bool IsAbsent(const std::optional<T> &x) {
+    return !x;
+  }
   template <typename A> bool Pre(const A &x) {
     AddNode<A>();
-    if constexpr (std::is_enum_v<A> || std::is_integral_v<A>)
+    if constexpr (std::is_enum_v<A> || std::is_integral_v<A>) {
       id.AddInteger(static_cast<uint64_t>(x));
-    else if constexpr (std::is_same_v<A, std::string>)
+    } else if constexpr (std::is_same_v<A, std::string>) {
       id.AddString(x);
+    } else if constexpr (TupleTrait<A>) {
+      // The walk skips absent optional fields; keep the positions of the rest.
+      std::apply(
+          [&](const auto &...field) { (id.AddBoolean(IsAbsent(field)), ...); },
+          x.t);
+    }
     return true;
   }
   template <typename A> void Post(const A &) { id.AddInteger(0); }
   // CharBlocks in expression nodes carry source locations, not structure.
   bool Pre(const parser::CharBlock &) { return false; }
+  bool Pre(const parser::SubstringInquiry &x) {
+    AddNode<parser::SubstringInquiry>();
+    // Only the source distinguishes %LEN from %KIND.
+    id.AddBoolean(x.source.back() == 'n');
+    return true;
+  }
+  bool Pre(const parser::Designator &x) {
+    AddNode<parser::Designator>();
+    // Semantics rewrites a misparsed s(i:j)%LEN or %KIND into a substring.
+    if (std::holds_alternative<parser::Substring>(x.u) && !x.source.empty()) {
+      id.AddInteger(x.source.back());
+    }
+    return true;
+  }
   bool Pre(const parser::Name &name) {
     AddNode<parser::Name>();
-    if (name.symbol)
-      id.AddPointer(&name.symbol->GetUltimate());
-    else
-      id.AddString(name.source.ToString());
+    // Placeholders, implied-DO indices, and intrinsics can get a new symbol at
+    // each occurrence or in each scope.
+    const Symbol *symbol{name.symbol ? &name.symbol->GetUltimate() : nullptr};
+    bool isDeclaration{symbol && !symbol->has<MiscDetails>() &&
+        !symbol->attrs().test(Attr::INTRINSIC) &&
+        symbol->owner().kind() != Scope::Kind::ImpliedDos};
+    id.AddBoolean(isDeclaration);
+    if (isDeclaration) {
+      id.AddPointer(symbol);
+    } else {
+      id.AddString(symbol ? symbol->name().ToString() : name.ToString());
+    }
     return false;
   }
   bool Pre(const parser::SignedIntLiteralConstant &literal) {
@@ -2755,34 +2787,20 @@ std::optional<MetadirectiveCandidateSet> BuildMetadirectiveCandidateSet(
         if (hasMatchAny && isStaticVMIApplicable) {
           // Represent both outcomes: a guarded candidate with the condition's
           // score and an unguarded candidate whose false condition preserves
-          // selector identity for subset checks. If the WHEN clause omits its
-          // directive, only add the unguarded candidate.
-          if (isExplicit) {
-            llvm::omp::VariantMatchInfo conditionTrueVMI{staticVMI};
-            addConditionTraitForRanking(conditionTrueVMI);
-            result.candidates.push_back({spec, std::move(conditionTrueVMI),
-                isExplicit, dynamicCondition});
-          }
+          // selector identity for subset checks.
+          llvm::omp::VariantMatchInfo conditionTrueVMI{staticVMI};
+          addConditionTraitForRanking(conditionTrueVMI);
+          result.candidates.push_back({spec, std::move(conditionTrueVMI),
+              isExplicit, dynamicCondition});
           staticVMI.addTrait(llvm::omp::TraitProperty::user_condition_false,
               conditionIdentity, conditionScorePtr);
           result.candidates.push_back({spec, std::move(staticVMI), isExplicit});
           continue;
         }
 
+        // An omitted directive is scored like an explicit NOTHING.
         llvm::omp::VariantMatchInfo rankingVMI{staticVMI};
-        if (isExplicit) {
-          addConditionTraitForRanking(rankingVMI);
-        } else {
-          // Preserve the existing lowering behavior for an omitted directive:
-          // do not let its runtime condition raise the implicit NOTHING rank,
-          // but keep the condition's identity for subset checks.
-          if (hasMatchAny && !isStaticVMIApplicable)
-            rankingVMI = llvm::omp::VariantMatchInfo();
-          rankingVMI.addTrait(hasMatchNone
-                  ? dynamicConditionTrait
-                  : llvm::omp::TraitProperty::user_condition_true,
-              conditionIdentity);
-        }
+        addConditionTraitForRanking(rankingVMI);
         result.candidates.push_back({spec, std::move(rankingVMI), isExplicit,
             dynamicCondition, /*conditionShouldBeTrue=*/!hasMatchNone});
         continue;

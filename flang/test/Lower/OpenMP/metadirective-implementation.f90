@@ -45,6 +45,24 @@ subroutine test_identical_unknown_vendors()
   !$omp& device={kind(gpu)}: taskwait)
 end subroutine
 
+! Under MATCH_ANY, an unknown vendor leaves the runtime condition to decide.
+! CHECK-LABEL: func.func @_QPtest_unknown_vendor_match_any_dynamic(
+! CHECK:       fir.if
+! CHECK-NEXT:    omp.taskyield
+! CHECK-NEXT:  } else {
+! CHECK-NEXT:    omp.taskwait
+subroutine test_unknown_vendor_match_any_dynamic(flag)
+  logical :: flag
+  !$omp metadirective &
+  !$omp& when(implementation={vendor(foo), extension(match_any)}, &
+  !$omp& user={condition(flag)}: taskyield) &
+#ifdef OMP_52
+  !$omp& otherwise(taskwait)
+#else
+  !$omp& default(taskwait)
+#endif
+end subroutine
+
 ! CHECK-LABEL: func.func @_QPtest_vendor_llvm()
 ! CHECK:         omp.taskwait
 ! CHECK:         return

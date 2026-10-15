@@ -188,6 +188,8 @@ struct VariantMatchInfo {
   SmallVector<UnknownTrait, 2> UnknownTraits;
   /// Identity of the user condition expression; empty when there is none.
   /// Subset checks compare it instead of the folded condition property.
+  /// Conditions share an identity only if they are the same expression before
+  /// folding: the same operations and operands, naming the same declarations.
   StringRef UserCondition;
 };
 
