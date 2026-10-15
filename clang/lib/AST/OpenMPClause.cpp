@@ -15,7 +15,10 @@
 #include "clang/AST/Attr.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclOpenMP.h"
+#include "clang/AST/DeclTemplate.h"
+#include "clang/AST/DynamicRecursiveASTVisitor.h"
 #include "clang/AST/Expr.h"
+#include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprOpenMP.h"
 #include "clang/Basic/LLVM.h"
 #include "clang/Basic/OpenMPKinds.h"
@@ -3040,6 +3043,47 @@ void OMPClausePrinter::VisitOMPXBareClause(OMPXBareClause *Node) {
   OS << "ompx_bare";
 }
 
+namespace {
+/// Canonical profiles identify template and function parameters only by
+/// position; add the declaration that owns each referenced parameter.
+class ParameterOwnerProfiler final : public ConstDynamicRecursiveASTVisitor {
+  llvm::FoldingSetNodeID &ID;
+
+  void addOwner(const Decl *D) {
+    if (isa_and_nonnull<ParmVarDecl, NonTypeTemplateParmDecl,
+                        TemplateTypeParmDecl, TemplateTemplateParmDecl>(D))
+      ID.AddPointer(cast<Decl>(D->getDeclContext())->getCanonicalDecl());
+  }
+
+public:
+  explicit ParameterOwnerProfiler(llvm::FoldingSetNodeID &ID) : ID(ID) {}
+
+  bool VisitDeclRefExpr(const DeclRefExpr *E) override {
+    addOwner(E->getDecl());
+    return true;
+  }
+  bool VisitSizeOfPackExpr(const SizeOfPackExpr *E) override {
+    if (!E->isPartiallySubstituted())
+      addOwner(E->getPack());
+    return true;
+  }
+  bool VisitTemplateTypeParmType(const TemplateTypeParmType *T) override {
+    addOwner(T->getDecl());
+    return true;
+  }
+  // Canonical profiles look through typedefs to the parameters they name.
+  bool VisitTypedefType(const TypedefType *T) override {
+    return TraverseType(T->desugar());
+  }
+  bool TraverseTemplateName(TemplateName Name,
+                            bool TraverseQualifier) override {
+    addOwner(Name.getAsTemplateDecl());
+    return ConstDynamicRecursiveASTVisitor::TraverseTemplateName(
+        Name, TraverseQualifier);
+  }
+};
+} // namespace
+
 void OMPTraitInfo::getAsVariantMatchInfo(ASTContext &ASTCtx,
                                          VariantMatchInfo &VMI) const {
   for (const OMPTraitSet &Set : Sets) {
@@ -3057,9 +3101,11 @@ void OMPTraitInfo::getAsVariantMatchInfo(ASTContext &ASTCtx,
         // Identify the condition by its original expression; substitution may
         // fold different template parameters to the same value.
         assert(Selector.OriginalCondition && "missing original condition");
+        const Expr *Condition =
+            Selector.OriginalCondition->IgnoreParenImpCasts();
         llvm::FoldingSetNodeID ID;
-        Selector.OriginalCondition->IgnoreParenImpCasts()->Profile(
-            ID, ASTCtx, /*Canonical=*/true);
+        Condition->Profile(ID, ASTCtx, /*Canonical=*/true);
+        ParameterOwnerProfiler(ID).TraverseStmt(Condition);
         llvm::FoldingSetNodeIDRef Profile = ID.Intern(ASTCtx.getAllocator());
         // Use the full profile rather than a hash to avoid collisions.
         StringRef ConditionIdentity(
@@ -3079,11 +3125,11 @@ void OMPTraitInfo::getAsVariantMatchInfo(ASTContext &ASTCtx,
       std::optional<llvm::APSInt> Score;
       llvm::APInt *ScorePtr = nullptr;
       if (Selector.ScoreOrCondition) {
+        // A non-constant score adds an inactive trait, not a user condition.
         if ((Score = Selector.ScoreOrCondition->getIntegerConstantExpr(ASTCtx)))
           ScorePtr = &*Score;
         else
-          VMI.addTrait(TraitProperty::user_condition_false,
-                       "<non-constant-score>");
+          VMI.addTrait(TraitProperty::invalid, "<non-constant-score>");
       }
 
       for (const OMPTraitProperty &Property : Selector.Properties)

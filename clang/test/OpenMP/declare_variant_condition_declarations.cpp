@@ -20,8 +20,20 @@
 // CHECK: call i32 @high()
 // CHECK: ret i32
 
+// Parameters at the same position of different templates are different
+// declarations.
+// CHECK-LABEL: define{{.*}} i32 @different_templates()
+// CHECK: call i32 @high()
+// CHECK: call i32 @high()
+// CHECK: call i32 @high()
+// CHECK: call i32 @high()
+// CHECK: call i32 @high()
+// CHECK: ret i32
+
 // Parameter names do not affect identity when their positions agree.
 // CHECK-LABEL: define{{.*}} i32 @renamed_parameters()
+// CHECK: call i32 @low()
+// CHECK: call i32 @low()
 // CHECK: call i32 @low()
 // CHECK: ret i32
 
@@ -60,6 +72,94 @@ template <int N> int renamed();
           implementation = {vendor(score(1) : llvm)})
 template <int A> int renamed();
 
+#pragma omp declare variant(high) \
+    match(user = {condition(sizeof(T) > 1)}, \
+          implementation = {vendor(score(100) : llvm)})
+template <typename T> int renamed_type();
+#pragma omp declare variant(low) \
+    match(user = {condition(sizeof(U) > 1)}, device = {kind(cpu)}, \
+          implementation = {vendor(score(1) : llvm)})
+template <typename U> int renamed_type();
+
+template <typename> struct Box {
+  static constexpr bool value = true;
+};
+#pragma omp declare variant(high) \
+    match(user = {condition(TT<int>::value)}, \
+          implementation = {vendor(score(100) : llvm)})
+template <template <typename> class TT> int renamed_template();
+#pragma omp declare variant(low) \
+    match(user = {condition(UU<int>::value)}, device = {kind(cpu)}, \
+          implementation = {vendor(score(1) : llvm)})
+template <template <typename> class UU> int renamed_template();
+
+template <int N> struct NonTypeHigh {
+#pragma omp declare variant(high) \
+    match(user = {condition(N)}, \
+          implementation = {vendor(score(100) : llvm)})
+  friend int non_type_owner();
+};
+template <int N> struct NonTypeLow {
+#pragma omp declare variant(low) \
+    match(user = {condition(N)}, device = {kind(cpu)}, \
+          implementation = {vendor(score(1) : llvm)})
+  friend int non_type_owner();
+};
+
+template <typename T> struct TypeHigh {
+#pragma omp declare variant(high) \
+    match(user = {condition(sizeof(T) > 1)}, \
+          implementation = {vendor(score(100) : llvm)})
+  friend int type_owner();
+};
+template <typename T> struct TypeLow {
+#pragma omp declare variant(low) \
+    match(user = {condition(sizeof(T) > 1)}, device = {kind(cpu)}, \
+          implementation = {vendor(score(1) : llvm)})
+  friend int type_owner();
+};
+
+template <template <typename> class TT> struct TemplateHigh {
+#pragma omp declare variant(high) \
+    match(user = {condition(TT<int>::value)}, \
+          implementation = {vendor(score(100) : llvm)})
+  friend int template_owner();
+};
+template <template <typename> class TT> struct TemplateLow {
+#pragma omp declare variant(low) \
+    match(user = {condition(TT<int>::value)}, device = {kind(cpu)}, \
+          implementation = {vendor(score(1) : llvm)})
+  friend int template_owner();
+};
+
+template <int... Ns> struct PackHigh {
+#pragma omp declare variant(high) \
+    match(user = {condition(sizeof...(Ns) > 0)}, \
+          implementation = {vendor(score(100) : llvm)})
+  friend int pack_owner();
+};
+template <int... Ns> struct PackLow {
+#pragma omp declare variant(low) \
+    match(user = {condition(sizeof...(Ns) > 0)}, device = {kind(cpu)}, \
+          implementation = {vendor(score(1) : llvm)})
+  friend int pack_owner();
+};
+
+template <typename T> struct TypedefHigh {
+  using U = T;
+#pragma omp declare variant(high) \
+    match(user = {condition(sizeof(U) > 1)}, \
+          implementation = {vendor(score(100) : llvm)})
+  friend int typedef_owner();
+};
+template <typename T> struct TypedefLow {
+  using U = T;
+#pragma omp declare variant(low) \
+    match(user = {condition(sizeof(U) > 1)}, device = {kind(cpu)}, \
+          implementation = {vendor(score(1) : llvm)})
+  friend int typedef_owner();
+};
+
 namespace First {
 enum { A = 1 };
 extern "C" {
@@ -96,7 +196,30 @@ extern "C" int distinct_parameters() {
   return distinct<1, 2>() + distinct<1, 1>();
 }
 
-extern "C" int renamed_parameters() { return renamed<1>(); }
+template struct NonTypeHigh<1>;
+template struct NonTypeLow<1>;
+template struct TypeHigh<int>;
+template struct TypeLow<int>;
+template struct TemplateHigh<Box>;
+template struct TemplateLow<Box>;
+template struct PackHigh<1>;
+template struct PackLow<1>;
+template struct TypedefHigh<int>;
+template struct TypedefLow<int>;
+int non_type_owner();
+int type_owner();
+int template_owner();
+int pack_owner();
+int typedef_owner();
+
+extern "C" int different_templates() {
+  return non_type_owner() + type_owner() + template_owner() + pack_owner() +
+         typedef_owner();
+}
+
+extern "C" int renamed_parameters() {
+  return renamed<1>() + renamed_type<int>() + renamed_template<Box>();
+}
 
 extern "C" int different_scopes() {
   return Second::scoped_base();
